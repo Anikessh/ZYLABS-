@@ -1,0 +1,283 @@
+Task 1) Nginx
+A)	INIT FILE
+/etc/puppet/modules/nginx/manifests/init.pp
+class nginx::install {
+               case  $::operatingsystem {
+                'Ubuntu': { $PACKAGE = [ "nginx", "nginx nginx-common", "nginx-full" ] }
+                 'CentOS': { $PACKAGE = [ "nginx", "nginx nginx-filesystem"  ] }
+              } 
+               group { NGINX-GRP:
+                  name => 'nginx',
+                  ensure => 'present',
+                  gid => '219'
+             }
+           user { NGINX:
+              name => 'nginx',
+              uid => '219',
+              gid => '219',
+              shell => '/sbin/nologin',
+              managehome => 'false',
+              require => Group['NGINX-GRP']
+         }
+          package { NGINXPKG:
+              name => 'nginx',
+              ensure => 'installed',
+              require => User['NGINX']
+          }
+           service { NGINXSRVC:
+                name => 'nginx',
+                ensure => 'running',
+                hasrestart => 'true',
+                require => Package['NGINXPKG']
+          }
+file {
+                "NGINXCNF":
+                ensure  => 'file',
+                path    => '/etc/nginx/nginx.conf',
+                owner   => 'root',
+                group   => 'root',
+                mode    => '744',
+                content => template("nginx/nginx.erb"),
+                notify  => Service['NGINXSRVC'];
+                "HOME":
+                ensure          => 'file',
+                path            => '/etc/nginx/conf.d/home.conf',
+                owner           => 'root',
+                group           => 'root',
+                mode            => '744',
+               recurse         => 'true',
+               source          => "puppet://$puppetserver/modules/nginx/nginx/conf.d/home.conf",
+                notify          => Service['NGINXSRVC'];
+}
+   exec { "ensure /etc/nginx/conf.d":
+             command => "/bin/mkdir -p /etc/nginx/conf.d",
+             creates => "/etc/nginx/conf.d"
+        }
+}
+  
+  class nginx {
+         include nginx::install 
+         }
+
+B) VirtualHosts for Nginx 
+/etc/puppet/modules/nginx/files/nginx/conf.d/home.conf 
+server_name home.zaya.in 192.168.10.1;
+# uWSGI serving Django.
+	upstream django-zaya-home {
+	# Distribute requests to servers based on client IP. This keeps load
+	# balancing fair but consistent per-client. In this instance we're
+	# only using one uWGSI worker anyway.
+	ip_hash;
+	#server unix:///tmp/home-zaya-uwsgi.sock;
+	server localhost:8005;
+	}	
+
+C)Nginx Template Location 
+
+/etc/puppet/modules/nginx/templates/nginx.erb
+user              nginx;
+worker_processes  1;
+
+error_log  /var/log/nginx/error.log;
+#error_log  /var/log/nginx/error.log  notice;
+#error_log  /var/log/nginx/error.log  info;
+pid        /var/run/nginx.pid;
+events {
+    worker_connections  1024;
+}
+ http {
+        sendfile on;
+        tcp_nopush on;
+        tcp_nodelay on;
+        keepalive_timeout 65;
+        types_hash_max_size 2048;
+        include /etc/nginx/mime.types;
+        default_type application/octet-stream;
+        access_log /var/log/nginx/access.log;
+        error_log /var/log/nginx/error.log;
+        gzip on;
+        gzip_disable "msie6";
+        gzip_min_length  1100;
+        gzip_buffers  4 32k;
+        gzip_types    text/plain application/x-javascript text/xml text/css;
+        open_file_cache          max=10000 inactive=10m;
+        open_file_cache_valid    2m;
+        open_file_cache_min_uses 1;
+        open_file_cache_errors   on;
+        ignore_invalid_headers on;
+        client_max_body_size    8m;
+        client_header_timeout  3m;
+        client_body_timeout 3m;
+        send_timeout     3m;
+        connection_pool_size  256;
+        client_header_buffer_size 4k;
+        large_client_header_buffers 4 32k;
+        request_pool_size  4k;
+        output_buffers   4 32k;
+        postpone_output  1460;
+        include /etc/nginx/conf.d/*.conf;
+        include /etc/nginx/sites-enabled/*;
+}
+
+DJANGO+PYTHON INSTALLATION
+PYTHON INIT FILE
+/etc/puppet/modules/python/manifests/init.pp
+
+stage { "pre": before => Stage["main"] }
+class python {
+    package {
+        "build-essential": ensure => latest;
+        "python": ensure => installed;
+        "python-dev": ensure => installed;
+        "python-setuptools": ensure => installed;
+    }
+    exec { "easy_install pip":
+        path => "/usr/local/bin:/usr/bin:/bin",
+        refreshonly => true,
+        require => Package["python-setuptools"],
+        subscribe => Package["python-setuptools"],
+    }
+}
+class { "python": stage => "pre" }
+MYSITE FILE FR DJANGO
+/etc/puppet/modules/mysite/manifests/init.pp
+class mysite {
+    include python
+    package {
+        "django": ensure => installed,
+        "gunicorn": ensure => installed,
+            provider => pip;
+    }
+}
+
+Node for Ubuntu and Centos
+/etc/puppet/manifests/nginx_dev.pp 
+node  'apache.centos6.com' {
+             include nginx
+             include python
+             include mysite
+}
+node 'ubuntu.client.com' {
+          include nginx
+          include python
+          include mysite
+} 
+
+Task 3) NetworkManager and Services check
+A)	INIT FILE
+/etc/puppet/modules/NetworkManager/manifests/init.pp 
+class network-manager::install {	
+         case  $::operatingsystem {
+                'Ubuntu': { $PACKAGE = [ "network-manager" ] }
+}
+              package { $PACKAGE:
+                      ensure => 'installed',
+                 }
+ 
+            service { NETMANAGER:
+            name   => 'network-manager',
+            ensure => 'running',
+            hasrestart => 'true', 
+            require => Package['$PACKAGE'] 
+}
+ 
+file { 
+          "NMANAGERCNF":
+          ensure => 'file',
+          path => '/etc/NetworkManager/NetworkManager.conf',
+          mode => '744',
+          owner => 'root',
+          group => 'root',
+          source => "puppet://$puppetserver/modules/NetworkManager/NetworkManager/NetworkManager.conf", 
+          notify => Service['NETMANAGER'];
+          "INTERFACES":
+               ensure          => 'file',
+                path            => '/etc/network/interfaces',
+                owner           => 'root',
+                group           => 'root',
+                mode            => '744',
+               recurse         => 'true',
+               source          => "puppet://$puppetserver/modules/NetworkManager/NetworkManager/interfaces",
+               notify          => Service['NETMANAGER'];
+
+}
+}
+
+  class  net-manager {
+         include network-manager::install 
+         }
+B)	NETWORKMANAGER CONF FILE
+/etc/puppet/modules/NetworkManager/files/NetworkManager/NetworkManager.conf
+
+[main]
+plugins=ifupdown,keyfile,ofono
+#dns=dnsmasq
+
+[ifupdown]
+managed=false
+C)	INTERFACE FILE
+/etc/puppet/modules/NetworkManager/files/NetworkManager/interfaces
+
+#This file describes the network interfaces available on your system
+# and how to activate them. For more information, see interfaces(5).
+# # The loopback network interface
+auto lo 
+iface lo inet loopback
+         
+# The primary network interface
+auto eth0
+iface eth0 inet dhcp
+# Example to keep MAC address between reboots 
+#hwaddress ether DE:AD:BE:EF:CA:FE
+# WiFi Example 
+auto wlan0
+iface wlan0 inet static
+address 192.168.10.1
+netmask 255.255.255.0
+network 192.168.1.0
+gateway 192.168.1.1
+
+Task 2) dnsmasq
+INIT FILE
+/etc/puppet/modules/dnsmasq/manifests/init.pp 
+
+class dnsmasq::install {
+               case  $::operatingsystem {
+                'Ubuntu': { $PACKAGE = [ "dnsmasq dnsmasq-base" ] }
+                 'CentOS': { $PACKAGE = [ "dnsmasq"  ] }
+              } 
+
+          package { $PACKAGE:
+                      ensure => 'installed',
+                 }
+             service { DNSMASQ:
+            name   => 'dnsmasq',
+            ensure => 'running',
+            hasrestart => 'true', 
+            require => Package['$PACKAGE'] 
+}
+            file {
+                "DNSMASQCNF":
+                ensure  => 'file',
+                path    => '/etc/dnsmasq.d/dns.conf',
+                owner   => 'root',
+                group   => 'root',
+                mode    => '744',
+                source  => "puppet://$puppetserver/modules/dnsmasq/dnsmasq/dns.conf", 
+                notify  => Service['DNSMASQ'];
+              }
+    }
+         class dnsmasq {
+                   include  dnsmasq::install
+   } 
+
+DNSMASQ CONF FILE
+/etc/puppet/modules/dnsmasq/files/dnsmasq/dns.conf 
+address=/home.zaya.in/192.168.10.1
+
+Node for Ubuntu and Centos 
+/etc/puppet/manifests/networkmanager.pp 
+node 'ubuntu.client.com' {
+    include net-manager
+    include dnsmasq
+}
